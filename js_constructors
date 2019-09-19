@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+declare -A omap
+
+### The following global variables, arrays, and final loop
+### populate a global map of object names to the info
+### about the constructor.
+
+declare excludes=--exclude=*.min.js
+
+declare -a grep_proto=(
+    grep
+    -ohs                          # o=match only, h=no filenames, s=no messages
+    '[_[:alnum:]]\+\.prototype\.' # escape the plus
+    "${excludes}"                 # invoke excludes
+    *
+)
+
+declare -a strip_prototypes=(
+    sed
+    s/\.prototype\.//g
+    -
+)
+
+declare -a obj_names=( $( "${grep_proto[@]}" | sort | uniq | "${strip_prototypes[@]}" ) )
+
+declare object_candidate pattern oline ofile onum ofunc
+
+for object_candidate in "${obj_names[@]}"; do
+    pattern="function\s\+${object_candidate}([^)]\+)"
+    oline=$( grep "${excludes}" -sno "${pattern}" * )
+    if [ "${#oline}" -gt 0 ]; then
+        omap["${object_candidate}"]="${oline}"
+    fi
+done
+
+# Returns colon-delimited list of integers that represent
+# the maximum length of each string of object information.
+#
+# Using colons because grep separates info with colons,
+# using the same delimiter means we can use IFS=':' to
+# break both strings (string length and grep match lines).
+get_string_lengths()
+{
+    local -i max_name=0
+    local -i max_fname=0
+    local -i max_num=0
+    local -i max_const=0
+
+    local IFS=':'
+
+    local key
+    local -a vals
+    for key in "${!omap[@]}"; do
+        vals=( ${omap[$key]} )
+        if [ "${#key}"     -gt $max_name  ]; then max_name="${#key}";      fi
+        if [ "${#vals[0]}" -gt $max_fname ]; then max_fname="${#vals[0]}"; fi
+        if [ "${#vals[1]}" -gt $max_num   ]; then max_num="${#vals[1]}";   fi
+        if [ "${#vals[2]}" -gt $max_const ]; then max_const="${#vals[2]}"; fi
+    done
+
+    echo "$max_name:$max_fname:$max_num:$max_const"
+}
+
+reset_screen()
+{
+    echo -n "[2J[1;1f"
+}
+
+
+print_tabbed_line()
+{
+    local IFS=':'
+    local -a strlens=( $1 )
+    local -a linearr=( $2 $3 )
+
+    for (( i=0, curpos=0, stop="${#linearr[@]}"; i < stop; ++i ))
+    do
+        echo -n "[${curpos}G"              # Move column to position value
+        echo -n "${linearr[$i]}"             # write column value
+        (( curpos += "${strlens[$i]}" + 2 )) # increment position value
+    done
+
+    echo                                     # newline upon exit
+}
+
+get_first_key()
+{
+    local keyname
+    for keyname in "${!omap[@]}"; do
+        if [ "${#keyname}" -gt 0 ]; then
+            echo $keyname
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+list_objects()
+{
+    reset_screen
+    local strlens=$( get_string_lengths )
+    local key value
+    for key in "${!omap[@]}"; do
+        print_tabbed_line $strlens "$key" "${omap[$key]}"
+    done
+}
+
+emacs_example()
+{
+    local IFS=':'
+    local keyname=$( get_first_key )
+    local -a varr=( ${omap[$keyname]} )
+    echo
+    echo "Suggested edit with emacs for object '$keyname'"
+    echo
+    echo "To get to constructor for ${keyname} in ${varr[0]}, please type:"
+    echo "[31memacs +${varr[1]} ${varr[0]}[0m"
+    echo "Where [31m+${varr[1]}[0m puts the cursor at the line ${varr[1]},"
+    echo "where the constructor is defined."
+}
+
+
+list_objects
+emacs_example
+
+
